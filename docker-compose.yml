@@ -1,0 +1,73 @@
+# Runs PodRadar on one machine, from the same images that will later run in Kubernetes.
+#
+#   cp .env.example .env           once: choose the database passwords
+#   docker compose up --build      then open http://localhost:8080
+#   docker compose down            stops and removes the containers (the database volume stays)
+#   docker compose down -v         also deletes the database
+#
+# Compose puts all services on one network, where each service is reachable by its name:
+# the client's nginx sends /api to http://server:8000, and the server connects to mongo:27017.
+# In Kubernetes, Services will play that role.
+
+name: podradar
+
+services:
+  mongo:
+    image: mongo:8.0
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:?copy .env.example to .env}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?copy .env.example to .env}
+      MONGO_INITDB_DATABASE: podradar
+      # Read by database/init/01-init.js, which creates the server's user
+      MONGO_APP_USERNAME: ${MONGO_APP_USERNAME:?copy .env.example to .env}
+      MONGO_APP_PASSWORD: ${MONGO_APP_PASSWORD:?copy .env.example to .env}
+    volumes:
+      # The data lives in a named volume, so it survives when the container is removed
+      - mongo-data:/data/db
+      # Scripts that run on the first start, with an empty volume
+      - ./database/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+
+  server:
+    build: ./server
+    image: podradar-server
+    environment:
+      CLUSTER_MODE: mock
+      APP_VERSION: dev
+      MOCK_TICK_SECONDS: "2"
+      MONGO_URI: mongodb://${MONGO_APP_USERNAME}:${MONGO_APP_PASSWORD}@mongo:27017/podradar
+    # No "ports": the server is reachable only inside the network, through the client.
+    # The same idea as a ClusterIP Service in Kubernetes.
+    healthcheck:
+      # Like a Kubernetes liveness probe: is the process alive? It does not check MongoDB on purpose,
+      # because restarting the server would not bring a database back. /api/readyz checks that.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8000/api/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    depends_on:
+      mongo:
+        condition: service_healthy
+    # Like Kubernetes, bring the container back if its process exits
+    restart: unless-stopped
+
+  client:
+    build: ./client
+    image: podradar-client
+    ports:
+      - "8080:8080"
+    # nginx would start without the server too, but this way the first page load already finds it
+    depends_on:
+      server:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  mongo-data:
