@@ -1,0 +1,19 @@
+# Node
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Environment files and secrets
+.env
+.env.*
+!.env.example
+
+# Kubernetes credentials
+kubeconfig
+*.kubeconfig
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
