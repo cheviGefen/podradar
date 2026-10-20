@@ -1,0 +1,7 @@
+# The namespace for everything PodRadar runs in the cluster
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: podradar
+  labels:
+    app.kubernetes.io/part-of: podradar

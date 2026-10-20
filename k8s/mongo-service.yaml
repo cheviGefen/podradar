@@ -1,0 +1,20 @@
+# A stable name for MongoDB: the server connects to mongo:27017, as it does in docker-compose.
+# Headless (clusterIP: None): the name resolves straight to the pod's IP, and each StatefulSet pod
+# also gets its own DNS name, e.g. mongo-0.mongo.podradar.svc.cluster.local.
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongo
+  namespace: podradar
+  labels:
+    app.kubernetes.io/name: mongo
+    app.kubernetes.io/part-of: podradar
+spec:
+  clusterIP: None
+  # The pods behind this name: the ones with this label
+  selector:
+    app.kubernetes.io/name: mongo
+  ports:
+    - name: mongodb
+      port: 27017
+      targetPort: mongodb

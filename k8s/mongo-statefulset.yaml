@@ -1,0 +1,88 @@
+# MongoDB: one pod with a stable name (mongo-0) and its own persistent disk
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mongo
+  namespace: podradar
+  labels:
+    app.kubernetes.io/name: mongo
+    app.kubernetes.io/part-of: podradar
+spec:
+  serviceName: mongo
+  replicas: 1
+  # Which pods belong to this StatefulSet: the ones with this label
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mongo
+  # The pod to create
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mongo
+        app.kubernetes.io/part-of: podradar
+    spec:
+      containers:
+        - name: mongo
+          image: mongo:8.0
+          ports:
+            - name: mongodb
+              containerPort: 27017
+          env:
+            # The official image reads these names; the values come from the Secret
+            - name: MONGO_INITDB_ROOT_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: mongo-credentials
+                  key: MONGO_ROOT_USERNAME
+            - name: MONGO_INITDB_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mongo-credentials
+                  key: MONGO_ROOT_PASSWORD
+            - name: MONGO_INITDB_DATABASE
+              value: podradar
+            # Read by the init script, which creates the server's user
+            - name: MONGO_APP_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: mongo-credentials
+                  key: MONGO_APP_USERNAME
+            - name: MONGO_APP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mongo-credentials
+                  key: MONGO_APP_PASSWORD
+          volumeMounts:
+            - name: data
+              mountPath: /data/db
+            - name: init
+              mountPath: /docker-entrypoint-initdb.d
+              readOnly: true
+          # The pod counts as ready once MongoDB accepts connections. A TCP check runs in the kubelet,
+          # outside the container; an exec check with mongosh ran a heavy process inside it every time,
+          # and those processes filled the memory limit until the pod was OOMKilled.
+          readinessProbe:
+            tcpSocket:
+              port: 27017
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+      volumes:
+        # The init script from the mongo-init ConfigMap, as a folder of files
+        - name: init
+          configMap:
+            name: mongo-init
+  # One persistent disk per pod, kept when the pod is deleted or recreated
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
