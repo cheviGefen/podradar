@@ -99,13 +99,41 @@ Run from the repository root.
    curl.exe http://localhost:8000/api/readyz
    ```
 
+10. The client's settings, as a ConfigMap. `API_UPSTREAM` is where nginx sends `/api`, and it overrides the `server:8000` default baked into the image. It has to be the full name, `server.podradar.svc.cluster.local:8000`: nginx looks the name up on every request with its own resolver, which ignores the pod's DNS search domains, so the short name `server` would not resolve.
+
+    ```bash
+    kubectl apply -f k8s/client-configmap.yaml
+    ```
+
+11. The client itself, as a Deployment with two replicas: it keeps no state, so any number of identical pods can serve it. It gets no Secret, since it never talks to MongoDB.
+
+    ```bash
+    kubectl apply -f k8s/client-deployment.yaml
+    kubectl get pods -n podradar -w
+    ```
+
+12. A stable address for the client, as a ClusterIP Service. Its EndpointSlice lists both client pods.
+
+    ```bash
+    kubectl apply -f k8s/client-service.yaml
+    kubectl get endpointslices -n podradar
+    ```
+
+    To open the app, keep a tunnel running and browse to http://localhost:8080:
+
+    ```bash
+    kubectl port-forward service/client 8080:8080 -n podradar
+    ```
+
 ## Probes
 
 MongoDB's readiness probe is a TCP check, not `mongosh`. An `exec` probe runs a process inside the container on every check; `mongosh` is a full Node.js program, the checks timed out and piled up, filled the container's 1Gi memory limit, and the pod was OOMKilled over and over. A health check runs all the time, so it has to be cheap: `httpGet` when the app has a health endpoint, `tcpSocket` when it does not.
 
+A probe checks its own component only. The client's probes ask nginx for `/`, not `/api/...`: nginx forwards `/api` to the server, so a server or MongoDB outage would fail the client's probes too, restarting or hiding a client that works fine (a cascading failure). The client is built to show "Disconnected" in that case.
+
 ## Services
 
-MongoDB's Service is headless (`clusterIP: None`): the name resolves straight to the pod, and each StatefulSet pod gets a DNS name of its own (`mongo-0.mongo.podradar.svc.cluster.local`), which a MongoDB replica set needs, since its members are not interchangeable. The server's Service is a regular ClusterIP: one virtual IP that never changes, and kube-proxy spreads the connections over the server pods, which are all the same. A Service finds its pods by label, and `targetPort` names the port as the pod names it (`http` in the server's Deployment).
+MongoDB's Service is headless (`clusterIP: None`): the name resolves straight to the pod, and each StatefulSet pod gets a DNS name of its own (`mongo-0.mongo.podradar.svc.cluster.local`), which a MongoDB replica set needs, since its members are not interchangeable. The server's and the client's Services are regular ClusterIPs: one virtual IP that never changes, and kube-proxy spreads the connections over the pods behind it, which are all the same. A Service finds its pods by label, and `targetPort` names the port as the pod names it (`http` in the server's Deployment).
 
 ## ConfigMaps
 

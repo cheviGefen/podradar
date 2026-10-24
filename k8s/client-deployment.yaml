@@ -1,0 +1,57 @@
+# The client: nginx serving the built React app, and forwarding /api to the server.
+# It keeps no state at all, so a Deployment, and any number of replicas.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: client
+  namespace: podradar
+  labels:
+    app.kubernetes.io/name: client
+    app.kubernetes.io/part-of: podradar
+spec:
+  # Two identical replicas: the Service spreads the requests over them,
+  # and the site stays up while one of them is replaced
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: client
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: client
+        app.kubernetes.io/part-of: podradar
+    spec:
+      containers:
+        - name: client
+          image: podradar-client:v1
+          ports:
+            - name: http
+              containerPort: 8080
+          # API_UPSTREAM: where nginx sends /api. It overrides the default baked into the image.
+          # No Secret here: the client talks only to the server, never to MongoDB.
+          envFrom:
+            - configMapRef:
+                name: client-config
+          # Both probes check nginx itself, with "/": /api would be forwarded to the server,
+          # and a server or MongoDB outage would then restart or hide a client that works fine
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 5
+          # nginx serving static files is light: it used about 10MiB in docker-compose
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false

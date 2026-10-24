@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: client-config
+  namespace: podradar
+  labels:
+    app.kubernetes.io/name: client
+    app.kubernetes.io/part-of: podradar
+data:
+  API_UPSTREAM: server.podradar.svc.cluster.local:8000
