@@ -64,9 +64,48 @@ Run from the repository root.
    kubectl get endpointslices -n podradar
    ```
 
+6. A version tag for the app images. With `:latest`, Kubernetes defaults to `imagePullPolicy: Always`, tries to pull the image from Docker Hub, where it does not exist, and the pod gets stuck in `ImagePullBackOff`. With a fixed tag the default is `IfNotPresent`, so the local image is used.
+
+   ```bash
+   docker tag podradar-server:latest podradar-server:v1
+   docker tag podradar-client:latest podradar-client:v1
+   ```
+
+7. The server's settings, as a ConfigMap read as environment variables:
+
+   ```bash
+   kubectl apply -f k8s/server-configmap.yaml
+   ```
+
+8. The server itself, as a Deployment. It builds `MONGO_URI` from the Secret with `$(NAME)` references, checks `/api/healthz` as its liveness probe and `/api/readyz` (which needs MongoDB) as its readiness probe, and runs as a non-root user. One replica, because in mock mode the simulated cluster lives in the pod's memory.
+
+   ```bash
+   kubectl apply -f k8s/server-deployment.yaml
+   kubectl get pods -n podradar -w
+   ```
+
+   `1/1` means `/api/readyz` answered, so the server reached MongoDB with the password from the Secret.
+
+9. A stable address for the server, as a regular ClusterIP Service: the client reaches it as `server:8000`.
+
+   ```bash
+   kubectl apply -f k8s/server-service.yaml
+   ```
+
+   To try the server from your computer, open a tunnel and keep it running, then call it from a second terminal:
+
+   ```bash
+   kubectl port-forward service/server 8000:8000 -n podradar
+   curl.exe http://localhost:8000/api/readyz
+   ```
+
 ## Probes
 
 MongoDB's readiness probe is a TCP check, not `mongosh`. An `exec` probe runs a process inside the container on every check; `mongosh` is a full Node.js program, the checks timed out and piled up, filled the container's 1Gi memory limit, and the pod was OOMKilled over and over. A health check runs all the time, so it has to be cheap: `httpGet` when the app has a health endpoint, `tcpSocket` when it does not.
+
+## Services
+
+MongoDB's Service is headless (`clusterIP: None`): the name resolves straight to the pod, and each StatefulSet pod gets a DNS name of its own (`mongo-0.mongo.podradar.svc.cluster.local`), which a MongoDB replica set needs, since its members are not interchangeable. The server's Service is a regular ClusterIP: one virtual IP that never changes, and kube-proxy spreads the connections over the server pods, which are all the same. A Service finds its pods by label, and `targetPort` names the port as the pod names it (`http` in the server's Deployment).
 
 ## ConfigMaps
 
@@ -85,3 +124,5 @@ kubectl create secret generic mongo-credentials --from-env-file=.env -n podradar
 The output contains the passwords in base64, so do not paste or commit it.
 
 Later the command will be replaced by a Kustomize `secretGenerator`, which keeps in git only the fact that the Secret is built from `.env`.
+
+For now there is one Secret for MongoDB's root and app users. The server takes only the two app keys, with `secretKeyRef`; `envFrom` with a `secretRef` would have handed it the root password too. It will be split into a root Secret and an app Secret together with the Kustomize and RBAC steps.

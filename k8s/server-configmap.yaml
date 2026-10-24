@@ -1,0 +1,15 @@
+# The server's settings, read as environment variables (see server/src/config.ts).
+# MONGO_URI is not here: it holds a password, so the Deployment builds it from the Secret.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: server-config
+  namespace: podradar
+  labels:
+    app.kubernetes.io/name: server
+    app.kubernetes.io/part-of: podradar
+data:
+  CLUSTER_MODE: mock
+  APP_VERSION: v1
+  # Quoted: ConfigMap values must be strings, and a bare 2 is a number in YAML
+  MOCK_TICK_SECONDS: "2"

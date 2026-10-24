@@ -1,0 +1,70 @@
+# The server: it keeps no data of its own (history goes to MongoDB), so a Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: server
+  namespace: podradar
+  labels:
+    app.kubernetes.io/name: server
+    app.kubernetes.io/part-of: podradar
+spec:
+  # One replica: in mock mode the simulated cluster lives in the pod's memory,
+  # so a second replica would show a different cluster
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: server
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: server
+        app.kubernetes.io/part-of: podradar
+    spec:
+      containers:
+        - name: server
+          image: podradar-server:v1
+          ports:
+            - name: http
+              containerPort: 8000
+          # Every key of the ConfigMap becomes an environment variable
+          envFrom:
+            - configMapRef:
+                name: server-config
+          env:
+            - name: MONGO_APP_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: mongo-credentials
+                  key: MONGO_APP_USERNAME
+            - name: MONGO_APP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mongo-credentials
+                  key: MONGO_APP_PASSWORD
+            # Built from the variables above: $(NAME) is replaced by Kubernetes, so the password
+            # comes only from the Secret. "mongo" is the MongoDB Service.
+            - name: MONGO_URI
+              value: mongodb://$(MONGO_APP_USERNAME):$(MONGO_APP_PASSWORD)@mongo:27017/podradar
+          # "Is the process alive?" If not, the container is restarted.
+          # It does not check MongoDB: a restart would not bring the database back.
+          livenessProbe:
+            httpGet:
+              path: /api/healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          # "Can it do its work right now?" 503 while MongoDB is unreachable: no traffic, no restart
+          readinessProbe:
+            httpGet:
+              path: /api/readyz
+              port: http
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 96Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
