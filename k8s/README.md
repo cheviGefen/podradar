@@ -125,6 +125,39 @@ Run from the repository root.
     kubectl port-forward service/client 8080:8080 -n podradar
     ```
 
+13. An Ingress controller, installed once per cluster with Helm (a one-time setup, see "Ingress" below). Traefik, pinned to a chart version so a reinstall gives the same result:
+
+    ```bash
+    helm repo add traefik https://traefik.github.io/charts
+    helm repo update
+    helm install traefik traefik/traefik --namespace traefik --create-namespace --version 42.1.3
+    ```
+
+    `curl.exe http://localhost` answers `404 page not found`: Traefik is listening, with no rules yet.
+
+14. The app's Ingress: requests to `podradar.localhost` under `/api` go to the server, everything else to the client. When a path matches both rules, the longer one wins.
+
+    ```bash
+    kubectl apply -f k8s/ingress.yaml
+    kubectl get ingress -n podradar
+    ```
+
+    Then open http://podradar.localhost, with no port-forward running. Any `*.localhost` name points to this computer, unlike `*.local`, which Windows looks up on the local network.
+
+## Ingress
+
+An Ingress has two parts. The Ingress resource (`ingress.yaml`) only holds the rules: which host and path go to which Service. The Ingress controller is the proxy that receives the requests and applies the rules; Kubernetes and Docker Desktop do not ship one. This project uses Traefik, installed with Helm: the widely used `ingress-nginx` controller stopped being maintained in March 2026 ([announcement](https://www.kubernetes.io/blog/2025/11/11/ingress-nginx-retirement/)).
+
+The Traefik chart's defaults are enough here: it watches standard Ingress resources, creates the default IngressClass `traefik`, and exposes itself through a LoadBalancer Service on ports 80 and 443, which Docker Desktop maps to `localhost`. To see every resource the chart creates before installing it, run `helm template traefik traefik/traefik --namespace traefik --version 42.1.3`.
+
+## Known issue: the server stays unready after a cold start
+
+If the server starts while MongoDB is not reachable yet, as happens when the whole cluster comes back after the computer restarts, its MongoDB client ends up closed ("Topology is closed" in the server's log) and never retries. `/api/readyz` then answers 503 forever, the server pod stays `0/1`, and Traefik answers 503 for every `/api` request. docker-compose hid this with `depends_on`; Kubernetes has no startup order between Deployments, so each component has to cope with dependencies that are not up yet. Until the server retries on its own, restart it once MongoDB is ready:
+
+```bash
+kubectl rollout restart deployment/server -n podradar
+```
+
 ## Probes
 
 MongoDB's readiness probe is a TCP check, not `mongosh`. An `exec` probe runs a process inside the container on every check; `mongosh` is a full Node.js program, the checks timed out and piled up, filled the container's 1Gi memory limit, and the pod was OOMKilled over and over. A health check runs all the time, so it has to be cheap: `httpGet` when the app has a health endpoint, `tcpSocket` when it does not.

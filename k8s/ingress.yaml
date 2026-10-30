@@ -1,0 +1,32 @@
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: podradar
+  namespace: podradar
+  labels:
+    app.kubernetes.io/part-of: podradar
+spec:
+  # The controller that handles these rules (kubectl get ingressclass)
+  ingressClassName: traefik
+  rules:
+    - host: podradar.localhost
+      http:
+        # When a request matches both paths, the longer one wins: /api/cluster goes to the server
+        paths:
+          # The API: everything that starts with /api goes straight to the server
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: server
+                port:
+                  number: 8000
+          # Everything else is the React app
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: client
+                port:
+                  number: 8080
