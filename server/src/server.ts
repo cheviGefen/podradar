@@ -12,7 +12,7 @@ if (settings.CLUSTER_MODE !== "mock") {
 }
 
 const database = settings.MONGO_URI ? new Database(settings.MONGO_URI) : undefined;
-const history = database ? new History(database.db) : undefined;
+const history = database ? new History(database) : undefined;
 if (!database) {
   console.log("MONGO_URI is not set: running without a database, so no history is kept");
 }
