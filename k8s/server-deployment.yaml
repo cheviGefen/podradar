@@ -22,7 +22,7 @@ spec:
     spec:
       containers:
         - name: server
-          image: podradar-server:v1
+          image: podradar-server:v2
           ports:
             - name: http
               containerPort: 8000
