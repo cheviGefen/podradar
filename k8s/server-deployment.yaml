@@ -20,6 +20,24 @@ spec:
         app.kubernetes.io/name: server
         app.kubernetes.io/part-of: podradar
     spec:
+      # Runs before the server and holds it back until MongoDB accepts connections.
+      # A second line of defence: the server also retries on its own (server/src/database.ts).
+      initContainers:
+        - name: wait-for-mongo
+          image: busybox:1.37
+          command: ["sh", "-c", "until nc -z mongo 27017; do echo waiting for mongo; sleep 2; done"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 32Mi
+          # busybox runs as root by default, and runAsNonRoot alone would refuse to start it,
+          # so it runs as the unprivileged "nobody" user (65534)
+          securityContext:
+            runAsUser: 65534
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
       containers:
         - name: server
           image: podradar-server:v2

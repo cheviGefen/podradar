@@ -67,9 +67,11 @@ Run from the repository root.
 6. A version tag for the app images. With `:latest`, Kubernetes defaults to `imagePullPolicy: Always`, tries to pull the image from Docker Hub, where it does not exist, and the pod gets stuck in `ImagePullBackOff`. With a fixed tag the default is `IfNotPresent`, so the local image is used.
 
    ```bash
-   docker tag podradar-server:latest podradar-server:v1
    docker tag podradar-client:latest podradar-client:v1
+   docker build -t podradar-server:v2 ./server
    ```
+
+   The server runs `v2`, which reconnects to MongoDB on its own (see "Startup order" below). A new version gets a new tag, so the previous one stays available for `kubectl rollout undo`.
 
 7. The server's settings, as a ConfigMap read as environment variables:
 
@@ -77,7 +79,7 @@ Run from the repository root.
    kubectl apply -f k8s/server-configmap.yaml
    ```
 
-8. The server itself, as a Deployment. It builds `MONGO_URI` from the Secret with `$(NAME)` references, checks `/api/healthz` as its liveness probe and `/api/readyz` (which needs MongoDB) as its readiness probe, and runs as a non-root user. One replica, because in mock mode the simulated cluster lives in the pod's memory.
+8. The server itself, as a Deployment. An init container waits until MongoDB accepts connections before the server starts. The server builds `MONGO_URI` from the Secret with `$(NAME)` references, checks `/api/healthz` as its liveness probe and `/api/readyz` (which needs MongoDB) as its readiness probe, and runs as a non-root user. One replica, because in mock mode the simulated cluster lives in the pod's memory.
 
    ```bash
    kubectl apply -f k8s/server-deployment.yaml
@@ -150,13 +152,14 @@ An Ingress has two parts. The Ingress resource (`ingress.yaml`) only holds the r
 
 The Traefik chart's defaults are enough here: it watches standard Ingress resources, creates the default IngressClass `traefik`, and exposes itself through a LoadBalancer Service on ports 80 and 443, which Docker Desktop maps to `localhost`. To see every resource the chart creates before installing it, run `helm template traefik traefik/traefik --namespace traefik --version 42.1.3`.
 
-## Known issue: the server stays unready after a cold start
+## Startup order
 
-If the server starts while MongoDB is not reachable yet, as happens when the whole cluster comes back after the computer restarts, its MongoDB client ends up closed ("Topology is closed" in the server's log) and never retries. `/api/readyz` then answers 503 forever, the server pod stays `0/1`, and Traefik answers 503 for every `/api` request. docker-compose hid this with `depends_on`; Kubernetes has no startup order between Deployments, so each component has to cope with dependencies that are not up yet. Until the server retries on its own, restart it once MongoDB is ready:
+Kubernetes has no startup order between workloads, unlike docker-compose's `depends_on`. When the whole cluster comes back after the computer restarts, the server and MongoDB start together, and the server may come up first.
 
-```bash
-kubectl rollout restart deployment/server -n podradar
-```
+Server `v1` got stuck that way: its first connection to MongoDB failed, the MongoDB client stayed closed ("Topology is closed" in its log), `/api/readyz` answered 503 forever, the pod stayed `0/1`, and Traefik answered 503 for every `/api` request until the server was restarted by hand. It is handled at two levels now:
+
+- In the code (server `v2`): a failed connection attempt is thrown away and the next call tries again with a fresh client, so the server recovers on its own as soon as MongoDB is up. This is the real fix: in a cluster, dependencies come and go at any time, not only at startup.
+- In Kubernetes: the `wait-for-mongo` init container in the server's Deployment loops `nc -z mongo 27017` and holds the server back until MongoDB accepts connections. The pod shows `Init:0/1` meanwhile, and `kubectl logs <pod> -c wait-for-mongo -n podradar` shows it waiting. It only covers startup, so it is a second line of defence, not a replacement for the retry.
 
 ## Probes
 
